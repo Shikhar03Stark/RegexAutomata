@@ -110,6 +110,10 @@ class DMachine: public Machine{
 
         /// @brief First state is the starting state, states begining with * are final states.
         void print_machine_table(){
+
+            std::cout << "States starting with * are final states" << std::endl;
+            std::cout << "Starting state is " << start->id << std::endl;
+            std::cout << std::endl;
             int sz = alphabet.size();
             std::set<DNode*> visited;
             std::stack<DNode*> S;
@@ -122,10 +126,10 @@ class DMachine: public Machine{
                         std::cout << "*";
                     }
                     visited.insert(node);
-                    std::cout << node->id << " :: ";
+                    std::cout << node->id << "\t=>\t";
                     for(int i = 0; i<sz; i++){
                         DNode* next = node->next[alphabet[i]];
-                        std::cout << next->id << "\t";
+                        std::cout << alphabet[i] << ":" << next->id << "\t";
                         if(visited.find(next) == visited.end()){
                             S.push(next);
                         }
@@ -133,11 +137,52 @@ class DMachine: public Machine{
                     std::cout << std::endl;
                 }
             }
-
+            std::cout << std::endl;
         }
 
         bool accepted(const std::string &s) {
+
+            for(auto& c: s){
+                bool check = std::binary_search(alphabet.begin(), alphabet.end(), c);
+                if(!check){
+                    std::cerr << "Input string has non-alphabet: " << s << std::endl;
+                    return false;
+                }
+            }
+
+            DNode* t = start;
+            int sz = s.size();
+            for(int i = 0; i<sz; i++){
+                t = t->next[s[i]];
+            }
+
+            bool isFinal = (final_states.find(t) != final_states.end());
+            if(isFinal){
+                return true;
+            }
+            
             return false;
+        }
+
+        std::vector<int> trace_states(const std::string &s){
+            for(auto& c: s){
+                bool check = std::binary_search(alphabet.begin(), alphabet.end(), c);
+                if(!check){
+                    std::cerr << "Input string has non-alphabet: " << s << std::endl;
+                    return {};
+                }
+            }
+            std::vector<int> result;
+            DNode* t = start;
+
+            result.push_back(t->id);
+            int sz = s.size();
+            for(int i = 0; i<sz; i++){
+                t = t->next[s[i]];
+                result.push_back(t->id);
+            }
+
+            return result;
         }
 };
 
@@ -315,7 +360,7 @@ class FA{
             }
 
             NDMachine *final_NFA = M.top(); M.pop();
-            std::cerr << "DBG: Number of states " << nd_state_id << std::endl;
+            std::cout << "Number of states in NFA " << nd_state_id << std::endl;
             this->ndm = final_NFA;
 
         }
@@ -327,59 +372,76 @@ class FA{
             int sz = alphabet.size();
             std::map<std::set<NDNode*>, std::vector<std::set<NDNode*>>> dfa_table;
             std::queue<std::set<NDNode*>> Q;
-            std::set<NDNode*> start_state;
+            std::vector<NDNode*> start_closure = this->ndm->start->epsilon_closure(nullchar);
+            std::set<NDNode*> start_state(start_closure.begin(), start_closure.end());
             std::set<std::set<NDNode*>> final_states;
-            start_state.insert(this->ndm->start);
+
+            {
+                bool isFinal = false;
+                for(auto& state: start_state){
+                    if(this->ndm->final_states.find(state) != this->ndm->final_states.end()){
+                        isFinal = true;
+                    }
+                }
+
+                if(isFinal){
+                    final_states.insert(start_state);
+                }
+            }
+
             dfa_table[start_state] = std::vector<std::set<NDNode*>>(sz);
             Q.push(start_state);
             while(!Q.empty()){
                 std::set<NDNode*> nd_state = Q.front(); Q.pop();
-
                 // Find null-closure of current subset
-                std::set<NDNode*> total_closure;
-                for(auto& state: nd_state){
-                    std::vector<NDNode*> closure = state->epsilon_closure(nullchar);
-                    for(auto& s: closure){
-                        total_closure.insert(s);
-                    }
-                }
-
                 // Build subset for alphabet[i] transition from nd_state
+                // set value of nd_state --alphabet[i]--> target
+                // Check if target is a final state
+                // Add newly discovered subset in dfa_table
+
                 for(int i = 0; i<sz; i++){
-                    std::set<NDNode*> target;
-                    bool isFinal = false;
-                    for(auto& e: total_closure){
-                        if(e->next.count(alphabet[i]) > 0){
-                            for(auto& state: e->next[alphabet[i]]){
-                                target.insert(state);
+                    std::set<NDNode*> total_next;
+                    for(auto& state: nd_state){
+                        if(state->next.count(alphabet[i]) > 0){
+                            std::vector<NDNode*> trans = state->next[alphabet[i]];
+                            for(auto& s: trans){
+                                total_next.insert(s);
                             }
                         }
-                        
-                        if(this->ndm->final_states.find(e) != this->ndm->final_states.end()){
+                    }
+
+                    std::set<NDNode*> total_closure;
+                    for(auto& state: total_next){
+                        std::vector<NDNode*> closure = state->epsilon_closure(nullchar);
+                        for(auto& e: closure){
+                            total_closure.insert(e);
+                        }
+                    }
+
+                    dfa_table[nd_state][i] = total_closure;
+
+                    bool isFinal = false;
+                    for(auto& state: total_closure){
+                        if(this->ndm->final_states.find(state) != this->ndm->final_states.end()){
                             isFinal = true;
                         }
                     }
 
-                    // set value of nd_state --alphabet[i]--> target
-                    dfa_table[nd_state][i] = target;
-
-                    // Check if target is a final state
                     if(isFinal){
-                        final_states.insert(target);
+                        final_states.insert(total_closure);
                     }
 
-                    // Add newly discovered subset in dfa_table
-                    if(dfa_table.count(target) == 0){
-                        dfa_table[target] = std::vector<std::set<NDNode*>>(sz);
-                        Q.push(target);
+                    if(dfa_table.count(total_closure) == 0){
+                        dfa_table[total_closure] = std::vector<std::set<NDNode*>>(sz);
+                        Q.push(total_closure);
                     }
+
 
                 }
+
             }
 
-            std::cerr << "DBG: Number of states in DFA = " << dfa_table.size() << std::endl;
-
-            DBG_table(dfa_table);
+            std::cout << "Number of states in DFA " << dfa_table.size() << std::endl;
 
             // Map (subset of NDNodes) to DNode
             std::map<std::set<NDNode*>, DNode*> dfa_states;
@@ -424,7 +486,19 @@ class FA{
             construct_NFA();
             construct_DFA();
 
+        }
+
+        void print_transition_table(){
+            std::cout << "Transition table of DFA" << std::endl;
             this->dm->print_machine_table();
+        }
+
+        bool check(const std::string &s){
+            return this->dm->accepted(s);
+        }
+
+        std::vector<int> trace_states(const std::string &s){
+            return this->dm->trace_states(s);
         }
 
 };
@@ -562,6 +636,8 @@ class FACompiler{
                 this->nullchar = s[0];
                 this->alphabet = s.substr(1);
                 std::sort(this->alphabet.begin(), this->alphabet.end());
+                std::cout << "Null character is: " << this->nullchar << std::endl;
+                std::cout << "Alphabet allowed: " << this->alphabet << std::endl;
             }
             else{
                 std::string err = "FACompiler ctor accepts string of atleast 2, first character is null character\n";
@@ -585,17 +661,63 @@ class FACompiler{
 
             std::string postfix = infix_postfix(s);
 
-            std::cerr << "DBG: " << postfix << std::endl;
+            std::cout << "For input " << s << " postfix notation is: " << postfix << std::endl;
 
             return FA(postfix, this->alphabet, nullchar);
         }
 };
 
 int main(){
+    std::cout << "First character in string of FACompiler constructor is nullcharacter" << std::endl;
+    std::cout << "+ symbol denotes OR. a+b means either a or b." << std::endl;
+    std::cout << "* symbol denotes Kleene-Closure. a* means 0 or more instances of a." << std::endl;
+    std::cout << ". symbol denotes concatenation. a.b means b comes after a." << std::endl;
+    std::cout << std::endl;
+
     try
     {    
-        FACompiler fac("0ab");
-        FA fa = fac.compile("(a+b)*.a.b*.a");
+        std::cout << "\nEnter FACompiler string (first charcter denotes null character, following substring is accepted alphabet)\nExample \"0ab\" denotes 0 as null, 'a' and 'b' as alphabets" << std::endl;
+        std::string args;
+        std::cin >> args;
+        FACompiler fac(args);
+
+        std::cout << "\nEnter regex (+ denotes union, * denotes Kleene-closure, . denotes concatenation)" << std::endl;
+        std::string regex;
+        std::cin >> regex;
+        FA fa = fac.compile(regex);
+
+        std::cout << "\nDFA Transition table for " << regex << std::endl;
+        fa.print_transition_table();
+
+        std::cout << "\nEnter number of test cases" << std::endl;
+        int tc = 0;
+        std::cin >> tc;
+        while(tc--){
+            std::cout << "\nEnter string to check against regex" << std::endl;
+            std::string test;
+            std::cin >> test;
+
+            bool accepted = fa.check(test);
+            if(accepted){
+                std::cout << test << " accepted!" << std::endl;
+                std::cout << "Trace of states" << std::endl;
+                std::vector<int> trace = fa.trace_states(test);
+                int sz = trace.size();
+                for(int i = 0; i<sz; i++){
+                    if(i >= test.size()){
+                        std::cout << ":" << trace[i] << " ";
+                    }
+                    else{
+                        std::cout << test[i] << ":" << trace[i] << " ";
+                    }
+                }
+                std::cout << std::endl;
+            }
+            else{
+                std::cout << test << " failed!" << std::endl;
+            }
+        }
+
 
     }
     catch(const std::string& e)
